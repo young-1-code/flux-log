@@ -261,39 +261,55 @@ State& state()
 void backend()
 {
     auto& s = state();
+    constexpr std::size_t batch_capacity = 256;
+    std::vector<LogItem> batch;
+    std::vector<std::string> lines;
+    std::vector<std::string_view> views;
+    batch.reserve(batch_capacity);
+    lines.reserve(batch_capacity);
+    views.reserve(batch_capacity);
     for (;;) {
-        LogItem x;
-        if (!s.q.wait_pop(x, s.cfg.flush_interval)) {
+        LogItem first;
+        if (!s.q.wait_pop(first, s.cfg.flush_interval)) {
             std::lock_guard l(s.m);
             if (s.stopping && s.q.size() == 0) break;
             continue;
         }
-        std::string line;
-        s.fmt->format(x, line);
-        std::string_view sv = line;
+        batch.clear();
+        batch.push_back(std::move(first));
+        while (batch.size() < batch_capacity) {
+            LogItem item;
+            if (!s.q.try_pop(item)) break;
+            batch.push_back(std::move(item));
+        }
+        lines.clear();
+        for (const auto& item : batch) {
+            lines.emplace_back();
+            s.fmt->format(item, lines.back());
+        }
+        bool flush_needed = false;
+        for (const auto& item : batch)
+            if (item.level >= flux::Level::Error) flush_needed = true;
         for (std::size_t si = 0; si < s.sinks.size(); ++si) {
             auto& k = s.sinks[si];
-            if (static_cast<unsigned>(x.level) < static_cast<unsigned>(k->level())) {
-                std::lock_guard l(s.m);
-                s.at.sink_filtered++;
-                continue;
-            }
-            if (k->write(std::span<const std::string_view>(&sv, 1))) {
-                std::lock_guard l(s.m);
-                s.persisted[si]++;
-            } else {
-                std::lock_guard l(s.m);
-                s.at.sink_failed++;
-            }
-        }
-        if (x.level >= flux::Level::Error)
-            for (auto& k : s.sinks) {
-                if (k->flush()) {
-                    std::lock_guard l(s.m);
-                    s.at.flushes++;
+            views.clear();
+            for (std::size_t i = 0; i < batch.size(); ++i) {
+                if (static_cast<unsigned>(batch[i].level) < static_cast<unsigned>(k->level())) {
+                    s.at.sink_filtered++;
+                } else {
+                    views.emplace_back(lines[i]);
                 }
             }
+            if (views.empty()) continue;
+            if (k->write(views)) {
+                s.persisted[si].fetch_add(views.size(), std::memory_order_relaxed);
+            } else {
+                s.at.sink_failed.fetch_add(views.size(), std::memory_order_relaxed);
+            }
+            if (flush_needed && k->flush()) s.at.flushes++;
+        }
     }
+    // 退出时最后一次 flush，正常批次只在周期或 error/panic 时 flush。
     for (auto& k : s.sinks)
         k->flush();
 }

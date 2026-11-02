@@ -39,6 +39,7 @@
 - 一批内完成格式化，并按 sink 收集 `string_view`。
 - 每个 sink 每批调用一次 `write(span)`。
 - 验收：日志顺序、sink 过滤、error/panic flush 和 shutdown 排空语义不变。
+- 当前结果：后端按最多 256 条批量出队，每个 sink 每批调用一次 `write(span)`；示例 3 行输出、error flush 和文件内容验证通过。单线程 225,961 msg/s，4 线程 616,877 msg/s。
 
 ## 阶段 5：Formatter 预解析和固定缓冲
 

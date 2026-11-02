@@ -340,6 +340,7 @@ Logger& get(std::string_view n)
     if (it != s.loggers.end()) return *it->second;
     auto p = std::make_unique<Logger>();
     p->name_ = n;
+    p->name_id_ = s.names.intern(p->name_);
     auto& x = *p;
     s.loggers.emplace(p->name_, std::move(p));
     return x;
@@ -404,9 +405,17 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
         i.level = lvl;
         i.ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
                    .count();
-        i.tid = (uint32_t)::gettid();
-        i.name_id = s.names.intern(logger.name_);
-        i.file_id = s.files.intern(basename(loc.file_name()));
+        // source_location 通常来自字符串字面量，按指针缓存最近文件的符号 ID。
+        thread_local const char* cached_file = nullptr;
+        thread_local std::uint16_t cached_file_id = 0;
+        thread_local std::uint32_t cached_tid = static_cast<std::uint32_t>(::gettid());
+        i.tid = cached_tid;
+        i.name_id = logger.name_id_;
+        if (loc.file_name() != cached_file) {
+            cached_file = loc.file_name();
+            cached_file_id = s.files.intern(basename(loc.file_name()));
+        }
+        i.file_id = cached_file_id;
         i.line = loc.line();
         i.text_len = (uint16_t)msg.size();
         if (msg.size() <= 256)

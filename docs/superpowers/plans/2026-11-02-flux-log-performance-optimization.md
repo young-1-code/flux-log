@@ -24,6 +24,7 @@
 - 每线程缓存最近的 source file basename 到 `file_id` 的映射。
 - `tid` 改为 thread-local 缓存，移除每条日志的 `gettid()` 调用。
 - 验收：多 logger、跨线程 source file、re-init 后符号仍正确。
+- 当前结果：name/file ID 与 tid 已缓存，GCC 13 构建和多线程示例通过；压测受共享统计锁和后端串行处理影响较大，300,000 条单线程约 209k～211k msg/s，4 线程约 231k～233k msg/s，未观察到稳定收益，后续阶段需先消除统计锁和逐条后端处理。
 
 ## 阶段 3：统计路径去锁
 

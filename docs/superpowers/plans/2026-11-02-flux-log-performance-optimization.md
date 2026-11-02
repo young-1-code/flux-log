@@ -70,3 +70,4 @@
 - 拆分 filter-only、format-only、enqueue、backend 和 e2e benchmark。
 - 记录 accepted、queue_dropped、shutdown_abandoned、sink_failed、persisted。
 - 将结果写入 README，避免把丢弃吞吐误认为落盘吞吐。
+- 当前结果：新增 filter-only 和 format-only 基准；本次运行 filter-only 约 514M checks/s，format-only 约 925k formats/s。README 已记录各层指标和 accepted/drop 对账要求。

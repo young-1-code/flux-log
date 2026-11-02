@@ -49,6 +49,12 @@
 - 验收：自定义 pattern、默认紧凑格式、6 位微秒和 basename 输出一致。
 - 当前结果：pattern 在 init 时解析为 token，后端不再逐条执行 find/replace；默认格式、微秒时间戳和 3 行示例输出通过。单线程 630,174 msg/s，4 线程 1,093,630 msg/s。
 
+### 阶段 5a：默认格式快速路径
+
+- 默认 pattern 使用 `FastDefaultFormatter`，固定顺序直接 append；自定义 pattern 继续使用 token formatter。
+- 时间戳使用固定缓冲和 `to_chars`，避免默认路径的 `ostringstream`。
+- 当前结果：单线程 721,177 msg/s，4 线程 1,108,820 msg/s；文件端到端 774,317 msg/s，1,000,000 条全部 accepted 并落盘。
+
 ## 阶段 6：FileSink I/O
 
 - 用文件描述符和 `write/writev` 替换 `ofstream <<`。

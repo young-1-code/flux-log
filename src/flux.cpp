@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -305,6 +306,61 @@ class PatternFormatter final : public flux::Formatter {
         }
     }
 };
+// 默认 pattern 的专用快速路径：字段顺序固定，不再解释 token。
+class FastDefaultFormatter final : public flux::Formatter {
+    SymbolTable* names_;
+    SymbolTable* files_;
+
+    static void append_uint(std::string& out, std::uint64_t value)
+    {
+        char buffer[32];
+        auto [end, error] = std::to_chars(buffer, buffer + sizeof(buffer), value);
+        if (error == std::errc{}) out.append(buffer, end);
+    }
+    static void append_timestamp(std::string& out, std::uint64_t ns)
+    {
+        const auto tp = std::chrono::system_clock::time_point(std::chrono::nanoseconds(ns));
+        const auto seconds = std::chrono::system_clock::to_time_t(tp);
+        std::tm tm{};
+        localtime_r(&seconds, &tm);
+        char date[32];
+        const auto length = std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &tm);
+        out.append(date, length);
+        out.push_back('.');
+        const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch()) % 1000000;
+        char digits[16];
+        auto [end, error] = std::to_chars(digits, digits + sizeof(digits), micros.count());
+        if (error == std::errc{}) {
+            const auto count = static_cast<std::size_t>(end - digits);
+            out.append(6 - count, '0');
+            out.append(digits, end);
+        }
+    }
+
+ public:
+    FastDefaultFormatter(SymbolTable* names, SymbolTable* files) : names_(names), files_(files) {}
+    void format(const LogItem& item, std::string& out) noexcept override
+    {
+        try {
+            out.reserve(out.size() + 64 + item.text_len);
+            append_timestamp(out, item.ns);
+            out.append(" [");
+            out.append(flux::level_str(item.level));
+            out.append("][");
+            append_uint(out, item.tid);
+            out.append("][");
+            out.append(names_->resolve(item.name_id));
+            out.append("][");
+            out.append(files_->resolve(item.file_id));
+            out.push_back(':');
+            append_uint(out, item.line);
+            out.append("]");
+            out.append(item.view());
+            out.push_back('\n');
+        } catch (...) {
+        }
+    }
+};
 // 全局状态由 registry 持有；s.m 保护生命周期、logger 表和统计数据。
 struct State {
     std::mutex m;
@@ -314,7 +370,7 @@ struct State {
     std::unordered_map<std::string, std::unique_ptr<flux::Logger>> loggers;
     flux::detail::mpmc_bounded_queue<LogItem> q;
     std::vector<std::shared_ptr<flux::Sink>> sinks;
-    std::unique_ptr<PatternFormatter> fmt;
+    std::unique_ptr<flux::Formatter> fmt;
     std::thread worker;
     struct AtomicStats {
         std::atomic_uint64_t accepted{0}, queue_dropped{0}, shutdown_abandoned{0}, format_failed{0};
@@ -425,9 +481,10 @@ void init(Config c)
     s.persisted = std::make_unique<std::atomic_uint64_t[]>(s.persisted_size);
     for (std::size_t i = 0; i < s.persisted_size; ++i)
         s.persisted[i].store(0);
-    s.fmt = std::make_unique<PatternFormatter>(
-        s.cfg.pattern.empty() ? "{ts} [{level}][{tid}][{name}][{file}:{line}]{msg}" : s.cfg.pattern, &s.names,
-        &s.files);
+    if (s.cfg.pattern.empty())
+        s.fmt = std::make_unique<FastDefaultFormatter>(&s.names, &s.files);
+    else
+        s.fmt = std::make_unique<PatternFormatter>(s.cfg.pattern, &s.names, &s.files);
     s.stopping = false;
     s.running = true;
     s.worker = std::thread(backend);

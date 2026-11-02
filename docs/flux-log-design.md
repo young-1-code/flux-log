@@ -60,7 +60,8 @@ flux-log 是面向单进程多线程程序（典型场景：交易系统的订�
                ▼                                     │ flush 信号 / 周期到期
         ┌────────────────────────────┐    ┌─────────┴──────────┐
         │ Vyukov 有界 MPMC 环形队列    │    │ condvar + 状态标志   │
-        │ （复用现有 mpmc_queue.hpp，  │    │ （空闲批处理唤醒）    │
+        │ （复用 src/detail 中的      │    │ （空闲批处理唤醒）    │
+        │  Vyukov MPMC 队列）         │    │                       │
         │  现代化改造，算法不变）       │    └────────────────────┘
         └────────────────────────────┘
 ```
@@ -105,7 +106,7 @@ flux-log 是面向单进程多线程程序（典型场景：交易系统的订�
 
 ### 3.1 队列（D1）
 
-沿用 Vyukov 有界 MPMC 环形队列算法（现有 `mpmc_queue.hpp`），但实现现代化（见 §11），并做两点包装改造：
+沿用 Vyukov 有界 MPMC 环形队列算法（`src/detail/mpmc_queue.hpp`），并做两点包装改造：
 
 - **定长元素**：cell 直接承载 `LogItem`（目标 288B）；含 spill 所有权，必须使用移动语义；
 - **等待/通知包装层** `BackendQueue`：内部聚合 `pending` 原子计数与溢出策略，接口为 `try_push(LogItem&)` / `pop_batch()` / `wait_and_pop(timeout)`。
@@ -188,7 +189,7 @@ flux-log/
 ├── src/
 │   ├── backend.cpp            # 后端线程主循环、BackendQueue
 │   ├── log_item.hpp           # LogItem（内部）
-│   ├── detail/mpmc_queue.hpp  # 现代化后的 Vyukov 队列（自 mpmc_queue.hpp 迁入）
+│   ├── detail/mpmc_queue.hpp  # Vyukov 有界 MPMC 队列
 │   ├── formatter.cpp          # pattern 解析与行组装
 │   └── sinks/{file,rotating,daily,stdout}.cpp
 ├── tests/                     # GTest 单测 + 多线程压力
@@ -323,9 +324,9 @@ bench 内容：`bench/` 下 (a) 生产端 ns/op 直测；(b) 多线程端到端 
 
 ---
 
-## 11. 现有 mpmc_queue.hpp 的现代化改造
+## 11. `src/detail/mpmc_queue.hpp` 的实现约束
 
-算法保留，实现问题在 M1 修复：
+实现基于 Vyukov 算法，必须满足：
 
 1. **默认构造不初始化 `_max_size`**：当前 `size()/capacity()` UB；
 2. **容量校验晚于 `new[]`**：抛异常即泄漏；改为先校验后分配；

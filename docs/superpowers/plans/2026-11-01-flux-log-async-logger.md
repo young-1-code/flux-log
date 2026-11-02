@@ -21,7 +21,7 @@
 - 时间戳：本地时区 `%Y-%m-%d %H:%M:%S.%6f`；主机无 tzdata 时回退 UTC 并 stderr 告警一次
 - 默认 pattern：`{ts} [{level}] [{tid}] [{name}] {file}:{line} {msg}`；级别串小写 `trace/debug/info/warning/error/critical`；`{file}` 只渲染**文件 basename**；行由 Formatter 追加 `\n`
 - Sink 写失败语义：`Sink::write` 返回 `bool`（绝不抛）；后端连续 3 次失败熔断 10s（Backend 构造参数可注入，供测试）
-- 原始 `mpmc_queue.hpp`（仓库根）**保留不动、不被引用**（保留是用户决定，勿删）
+- 原始根目录 `mpmc_queue.hpp` 已迁移为 `src/detail/mpmc_queue.hpp` 的无锁实现；根目录旧文件删除，避免两份队列实现并存
 - 掉落汇总：DropNewest 丢消息时后端每秒最多一条 stderr 汇总（文案含当期/累计数）
 - 新建 Logger 默认级别为 `Info`；未知枚举、非法容量、负时间和空 sinks 均拒绝 `init()`，不静默回退
 - shutdown 发布停止标志后拒绝新日志，已进入提交阶段的日志允许完成；超时放弃剩余队列并计入 `shutdown_abandoned`
@@ -91,7 +91,7 @@ TEST(Config, DefaultsMatchSpec) {
 - Modify: `CMakeLists.txt`（flux 转 STATIC，装 `src/detail` 路径）、`tests/CMakeLists.txt`
 
 **Interfaces:**
-- Produces: `flux::detail::mpmc_bounded_queue<T>`：`explicit mpmc_bounded_queue(size_t n)`（n 非 2 的幂或 <2 抛 `std::invalid_argument`，**校验先于分配**）；`bool try_push(T&&)` / `bool try_pop(T&)`；`size_t size() const noexcept`（= enqueue−dequeue，无符号回绕天然正确）；`size_t capacity() const noexcept`；默认构造 = 容量 0、所有成员初始化（size()/capacity() 不 UB）；`std::unique_ptr<cell_t[]>` 持有；cacheline 对齐用 `std::hardware_destructive_interference_size`（无值时回退 64）。算法照抄根目录 `mpmc_queue.hpp`（Vyukov），只做 §11 的 6 项修复
+  - Produces: `flux::detail::mpmc_bounded_queue<T>`：`explicit mpmc_bounded_queue(size_t n)`（n 非 2 的幂或 <2 抛 `std::invalid_argument`，**校验先于分配**）；`bool try_push(T&&)` / `bool try_pop(T&)`；`size_t size() const noexcept`（= enqueue−dequeue，无符号回绕天然正确）；`size_t capacity() const noexcept`；默认构造 = 容量 0、所有成员初始化（size()/capacity() 不 UB）；`std::unique_ptr<cell_t[]>` 持有；cacheline 对齐用 `std::hardware_destructive_interference_size`（无值时回退 64）。实现基于 Vyukov 算法并统一位于 `src/detail`。
 
 - [ ] **Step 1: 写失败测试** `tests/test_mpmc.cpp`
 
@@ -381,4 +381,4 @@ public:
 
 - 全部 checkbox 完成、`ctest` 全绿（含 tsan/asan 两套）
 - spec §7 基准数字记录在 README（达标或标注差距）
-- 仓库根 `mpmc_queue.hpp` 未被引用、未被删除
+- 队列实现统一位于 `src/detail/mpmc_queue.hpp`，仓库根目录不保留旧副本

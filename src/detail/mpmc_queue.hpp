@@ -94,11 +94,20 @@ class mpmc_bounded_queue {
     bool wait_pop(T& value, std::chrono::milliseconds timeout)
     {
         if (try_pop(value)) return true;
+        sleeping_.store(true, std::memory_order_release);
+        if (try_pop(value)) {
+            sleeping_.store(false, std::memory_order_release);
+            return true;
+        }
         std::unique_lock lock(wait_mutex_);
         wait_cv_.wait_for(lock, timeout, [&] { return size() != 0; });
+        sleeping_.store(false, std::memory_order_release);
         return try_pop(value);
     }
-    void notify() noexcept { wait_cv_.notify_one(); }
+    void notify() noexcept
+    {
+        if (sleeping_.exchange(false, std::memory_order_acq_rel)) wait_cv_.notify_one();
+    }
 
  private:
     struct cell {
@@ -110,6 +119,7 @@ class mpmc_bounded_queue {
     std::size_t capacity_{0};
     alignas(64) std::atomic<std::size_t> enqueue_pos_{0};
     alignas(64) std::atomic<std::size_t> dequeue_pos_{0};
+    std::atomic_bool sleeping_{false};
     mutable std::mutex wait_mutex_;
     std::condition_variable wait_cv_;
 };

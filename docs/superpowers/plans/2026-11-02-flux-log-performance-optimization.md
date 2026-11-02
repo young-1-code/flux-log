@@ -63,6 +63,7 @@
 - 检查 MPMC sequence、缓存行布局和 `LogItem` 移动成本。
 - 评估 `pin_backend` 和批量大小。
 - 验收：MPMC 守恒、无死锁、TSAN/ASAN（工具链可用时）。
+- 当前结果：增加 sleeping 状态，仅在后端可能休眠时通知；GCC 13 构建、示例和 MPMC smoke test 通过。本轮生产压测为单线程 646,852 msg/s、4 线程 1,011,420 msg/s，较阶段 5 有运行波动，未宣称稳定收益。
 
 ## 阶段 8：基准重构
 

@@ -17,7 +17,7 @@ constexpr std::string_view level_str(Level v) noexcept
         case Level::Error:
             return "error";
         case Level::Critical:
-            return "critical";
+            return "panic";
         default:
             return "off";
     }

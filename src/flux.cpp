@@ -18,6 +18,7 @@
 #include "flux/log.hpp"
 
 namespace flux::detail {
+void record_format_failed() noexcept;
 // append-only 符号表：生产者写入时加锁，后端只按 id 读取。
 class SymbolTable {
     mutable std::mutex m_;
@@ -68,25 +69,6 @@ std::string basename(std::string_view s)
 {
     auto p = s.find_last_of("/\\");
     return std::string(s.substr(p == std::string_view::npos ? 0 : p + 1));
-}
-std::string replace_args(std::string_view f, const std::vector<std::string>& a)
-{
-    std::string o;
-    size_t pos = 0, ai = 0;
-    while (pos < f.size()) {
-        auto p = f.find("{}", pos);
-        if (p == std::string_view::npos) {
-            o.append(f.substr(pos));
-            break;
-        }
-        o.append(f.substr(pos, p - pos));
-        if (ai < a.size())
-            o += a[ai++];
-        else
-            o += "{}";
-        pos = p + 2;
-    }
-    return o;
 }
 // 文件 sink 只由后端线程访问，内部缓冲减少 write 次数。
 class FileSink final : public flux::Sink {
@@ -402,6 +384,13 @@ Stats stats()
 }  // namespace flux
 
 namespace flux::detail {
+void record_format_failed() noexcept
+{
+    auto& s = state();
+    std::lock_guard l(s.m);
+    s.st.format_failed++;
+}
+
 void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) noexcept
 {
     try {

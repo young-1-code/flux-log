@@ -1,6 +1,7 @@
 #pragma once
+#include <format>
+#include <iterator>
 #include <source_location>
-#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -10,7 +11,8 @@ namespace flux {
 class Logger;
 namespace detail {
 void emit(Logger&, Level, std::source_location, std::string) noexcept;
-}
+void record_format_failed() noexcept;
+}  // namespace detail
 class Logger {
  public:
     // 热路径只做等级判断；默认阈值为 Info。
@@ -19,31 +21,15 @@ class Logger {
     void set_overflow(OverflowPolicy p) noexcept { policy_ = p; }
     // 参数在生产线程展开，后端只负责行组装和 I/O。
     template <class... A>
-    void log(Level l, std::source_location loc, std::string_view fmt, A&&... a) noexcept
+    void log(Level l, std::source_location loc, std::format_string<A...> fmt, A&&... a) noexcept
     {
         try {
-            std::vector<std::string> vals;
-            vals.reserve(sizeof...(A));
-            (vals.emplace_back(([&] {
-                std::ostringstream x;
-                x << a;
-                return x.str();
-            })()),
-             ...);
             std::string result;
-            std::size_t p = 0, n = 0;
-            while (p < fmt.size()) {
-                auto q = fmt.find("{}", p);
-                if (q == std::string_view::npos) {
-                    result.append(fmt.substr(p));
-                    break;
-                }
-                result.append(fmt.substr(p, q - p));
-                result += n < vals.size() ? vals[n++] : "{}";
-                p = q + 2;
-            }
+            result.reserve(256);
+            std::format_to(std::back_inserter(result), fmt, std::forward<A>(a)...);
             detail::emit(*this, l, loc, std::move(result));
         } catch (...) {
+            detail::record_format_failed();
         }
     }
 

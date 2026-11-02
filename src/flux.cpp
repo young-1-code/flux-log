@@ -243,7 +243,13 @@ struct State {
     std::vector<std::shared_ptr<flux::Sink>> sinks;
     std::unique_ptr<PatternFormatter> fmt;
     std::thread worker;
-    flux::Stats st;
+    struct AtomicStats {
+        std::atomic_uint64_t accepted{0}, queue_dropped{0}, shutdown_abandoned{0}, format_failed{0};
+        std::atomic_uint64_t oversize_truncated{0}, sink_filtered{0}, sink_failed{0};
+        std::atomic_uint64_t pre_init{0}, post_shutdown{0}, flushes{0};
+    } at;
+    std::unique_ptr<std::atomic_uint64_t[]> persisted;
+    std::size_t persisted_size{0};
     std::condition_variable cv;
 };
 State& state()
@@ -265,25 +271,26 @@ void backend()
         std::string line;
         s.fmt->format(x, line);
         std::string_view sv = line;
-        for (auto& k : s.sinks) {
+        for (std::size_t si = 0; si < s.sinks.size(); ++si) {
+            auto& k = s.sinks[si];
             if (static_cast<unsigned>(x.level) < static_cast<unsigned>(k->level())) {
                 std::lock_guard l(s.m);
-                s.st.sink_filtered++;
+                s.at.sink_filtered++;
                 continue;
             }
             if (k->write(std::span<const std::string_view>(&sv, 1))) {
                 std::lock_guard l(s.m);
-                s.st.persisted[k->name()]++;
+                s.persisted[si]++;
             } else {
                 std::lock_guard l(s.m);
-                s.st.sink_failed++;
+                s.at.sink_failed++;
             }
         }
         if (x.level >= flux::Level::Error)
             for (auto& k : s.sinks) {
                 if (k->flush()) {
                     std::lock_guard l(s.m);
-                    s.st.flushes++;
+                    s.at.flushes++;
                 }
             }
     }
@@ -325,6 +332,10 @@ void init(Config c)
     s.cfg = std::move(c);
     s.q.reset(s.cfg.queue_items);
     s.sinks = s.cfg.sinks;
+    s.persisted_size = s.sinks.size();
+    s.persisted = std::make_unique<std::atomic_uint64_t[]>(s.persisted_size);
+    for (std::size_t i = 0; i < s.persisted_size; ++i)
+        s.persisted[i].store(0);
     s.fmt = std::make_unique<PatternFormatter>(
         s.cfg.pattern.empty() ? "{ts} [{level}][{tid}][{name}][{file}:{line}]{msg}" : s.cfg.pattern, &s.names,
         &s.files);
@@ -351,7 +362,7 @@ void flush(std::chrono::milliseconds)
     std::lock_guard l(s.m);
     for (auto& k : s.sinks)
         k->flush();
-    s.st.flushes++;
+    s.at.flushes++;
 }
 void shutdown(std::chrono::milliseconds timeout)
 {
@@ -368,7 +379,7 @@ void shutdown(std::chrono::milliseconds timeout)
     if (s.q.size()) {
         LogItem x;
         while (s.q.try_pop(x))
-            s.st.shutdown_abandoned++;
+            s.at.shutdown_abandoned++;
     }
     {
         std::lock_guard l(s.m);
@@ -379,8 +390,20 @@ void shutdown(std::chrono::milliseconds timeout)
 Stats stats()
 {
     auto& s = state();
-    std::lock_guard l(s.m);
-    return s.st;
+    Stats out;
+    out.accepted = s.at.accepted.load();
+    out.queue_dropped = s.at.queue_dropped.load();
+    out.shutdown_abandoned = s.at.shutdown_abandoned.load();
+    out.format_failed = s.at.format_failed.load();
+    out.oversize_truncated = s.at.oversize_truncated.load();
+    out.sink_filtered = s.at.sink_filtered.load();
+    out.sink_failed = s.at.sink_failed.load();
+    out.pre_init = s.at.pre_init.load();
+    out.post_shutdown = s.at.post_shutdown.load();
+    out.flushes = s.at.flushes.load();
+    for (std::size_t i = 0; i < s.sinks.size(); ++i)
+        out.persisted[s.sinks[i]->name()] = s.persisted[i].load();
+    return out;
 }
 }  // namespace flux
 
@@ -389,7 +412,7 @@ void record_format_failed() noexcept
 {
     auto& s = state();
     std::lock_guard l(s.m);
-    s.st.format_failed++;
+    s.at.format_failed++;
 }
 
 void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) noexcept
@@ -398,7 +421,7 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
         auto& s = state();
         if (msg.size() > 65535) {
             std::lock_guard l(s.m);
-            s.st.oversize_truncated++;
+            s.at.oversize_truncated++;
             msg.resize(65535);
         }
         LogItem i;
@@ -429,9 +452,9 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
                 std::lock_guard l(s.m);
                 if (!s.running) {
                     if (s.stopping)
-                        s.st.post_shutdown++;
+                        s.at.post_shutdown++;
                     else
-                        s.st.pre_init++;
+                        s.at.pre_init++;
                     std::fwrite(msg.data(), 1, msg.size(), stderr);
                     std::fputc('\n', stderr);
                     return;
@@ -439,12 +462,12 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
             }
             if (s.q.try_push(std::move(i))) {
                 std::lock_guard l(s.m);
-                s.st.accepted++;
+                s.at.accepted++;
                 return;
             }
             if (logger.policy_ == OverflowPolicy::DropNewest) {
                 std::lock_guard l(s.m);
-                s.st.queue_dropped++;
+                s.at.queue_dropped++;
                 return;
             }
             std::this_thread::yield();
@@ -452,7 +475,7 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
     } catch (...) {
         auto& s = state();
         std::lock_guard l(s.m);
-        s.st.format_failed++;
+        s.at.format_failed++;
     }
 }
 }  // namespace flux::detail

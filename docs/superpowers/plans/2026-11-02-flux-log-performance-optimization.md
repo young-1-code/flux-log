@@ -31,6 +31,7 @@
 - `accepted`、`queue_dropped`、`format_failed` 等热路径计数改为原子或线程本地计数。
 - 后端统计按 sink 使用固定 sink id，避免每条日志锁 `unordered_map`。
 - 验收：多线程统计守恒和 `stats()` 结果一致。
+- 当前结果：标量统计改为原子计数，`persisted` 改为按 sink 的原子数组；GCC 13 构建、示例统计和文件输出通过。单线程 224,594 msg/s，4 线程 603,067 msg/s。
 
 ## 阶段 4：后端批量处理
 

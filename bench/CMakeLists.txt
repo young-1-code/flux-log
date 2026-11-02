@@ -1,0 +1,4 @@
+add_executable(flux_bench_producer bench_producer.cpp)
+target_link_libraries(flux_bench_producer PRIVATE flux)
+add_executable(flux_bench_e2e bench_e2e.cpp)
+target_link_libraries(flux_bench_e2e PRIVATE flux)

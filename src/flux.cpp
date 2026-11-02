@@ -223,8 +223,8 @@ class PatternFormatter final : public flux::Formatter {
             auto t = std::chrono::system_clock::to_time_t(tp);
             std::tm tm{};
             localtime_r(&t, &tm);
-            const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()) % 1000;
-            ts << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << millis.count();
+            const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch()) % 1000000;
+            ts << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(6) << micros.count();
             std::string r = pat_;
             auto sub = [&](std::string_view k, std::string v) {
                 size_t p = 0;
@@ -308,7 +308,7 @@ namespace flux {
 std::unique_ptr<Formatter> make_pattern_formatter(std::string_view p, detail::SymbolTable* n, detail::SymbolTable* f)
 {
     return std::make_unique<PatternFormatter>(
-        p.empty() ? "{ts} [{level}] [{tid}] [{name}] {file}:{line} {msg}" : std::string(p), n, f);
+        p.empty() ? "{ts} [{level}][{tid}][{name}][{file}:{line}]{msg}" : std::string(p), n, f);
 }
 std::shared_ptr<Sink> make_file_sink(std::string p, std::optional<Rotate> r, std::size_t b)
 {
@@ -338,7 +338,7 @@ void init(Config c)
     s.q.reset(s.cfg.queue_items);
     s.sinks = s.cfg.sinks;
     s.fmt = std::make_unique<PatternFormatter>(
-        s.cfg.pattern.empty() ? "{ts} [{level}] [{tid}] [{name}] {file}:{line} {msg}" : s.cfg.pattern, &s.names,
+        s.cfg.pattern.empty() ? "{ts} [{level}][{tid}][{name}][{file}:{line}]{msg}" : s.cfg.pattern, &s.names,
         &s.files);
     s.stopping = false;
     s.running = true;

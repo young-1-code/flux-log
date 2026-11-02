@@ -13,7 +13,7 @@ constexpr std::string_view level_str(Level v) noexcept
         case Level::Info:
             return "info";
         case Level::Warn:
-            return "warning";
+            return "warn";
         case Level::Error:
             return "error";
         case Level::Critical:

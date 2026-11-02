@@ -9,11 +9,13 @@
 #include <string_view>
 #include "config.hpp"
 namespace flux {
+// Sink 由唯一后端线程调用；实现必须把 I/O 异常转换为 false。
 class Sink {
  public:
     virtual ~Sink() = default;
     virtual bool write(std::span<const std::string_view>) noexcept = 0;
     virtual bool flush() noexcept = 0;
+    // fsync 策略属于 sink，而 flush_interval 属于全局后端。
     virtual void set_fsync(FsyncPolicy p) noexcept { fsync_ = p; }
     FsyncPolicy fsync_policy() const noexcept { return fsync_; }
     void set_level(Level l) noexcept { level_ = l; }

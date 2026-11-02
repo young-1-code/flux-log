@@ -18,6 +18,7 @@
 #include "flux/log.hpp"
 
 namespace flux::detail {
+// append-only 符号表：生产者写入时加锁，后端只按 id 读取。
 class SymbolTable {
     mutable std::mutex m_;
     std::vector<std::string> v_{""};
@@ -41,6 +42,7 @@ class SymbolTable {
         return id < v_.size() ? v_[id] : std::string_view{};
     }
 };
+// 队列元素固定为 288B；spill 只在消息超过 256B 时分配。
 struct LogItem {
     uint64_t ns{};
     uint32_t tid{};
@@ -86,6 +88,7 @@ std::string replace_args(std::string_view f, const std::vector<std::string>& a)
     }
     return o;
 }
+// 文件 sink 只由后端线程访问，内部缓冲减少 write 次数。
 class FileSink final : public flux::Sink {
  protected:
     std::string path_;
@@ -208,6 +211,7 @@ class DailySink final : public flux::Sink {
     bool flush() noexcept override { return current_->flush(); }
     std::string name() const override { return path_for(day_); }
 };
+// PatternFormatter 把生产时间戳和符号表字段渲染成最终文本行。
 class PatternFormatter final : public flux::Formatter {
     std::string pat_;
     SymbolTable* n_;
@@ -246,6 +250,7 @@ class PatternFormatter final : public flux::Formatter {
         }
     }
 };
+// 全局状态由 registry 持有；s.m 保护生命周期、logger 表和统计数据。
 struct State {
     std::mutex m;
     bool running = false, stopping = false;
@@ -264,6 +269,7 @@ State& state()
     static State s;
     return s;
 }
+// 后端循环：阻塞取一条，向每个满足等级阈值的 sink 写入，再按需 flush。
 void backend()
 {
     auto& s = state();

@@ -1,5 +1,6 @@
 #pragma once
 #include "registry.hpp"
+// 宏捕获调用点 source_location，避免业务代码显式传递文件和行号。
 #define FLUX_LOG(l, lvl, fmt, ...)                                                                              \
     do {                                                                                                        \
         if ((l).should_log(lvl)) (l).log(lvl, std::source_location::current(), fmt __VA_OPT__(, ) __VA_ARGS__); \

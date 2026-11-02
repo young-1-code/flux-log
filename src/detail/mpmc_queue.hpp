@@ -22,6 +22,7 @@ class mpmc_bounded_queue {
 
     void reset(std::size_t n)
     {
+        // 先校验容量再分配，避免非法配置造成部分初始化。
         if (n < 2 || (n & (n - 1)) != 0) throw std::invalid_argument("queue_items must be a power of two >= 2");
         auto next = std::make_unique<cell[]>(n);
         for (std::size_t i = 0; i < n; ++i)
@@ -42,6 +43,7 @@ class mpmc_bounded_queue {
         for (;;) {
             c = &buffer_[pos & mask_];
             const auto seq = c->sequence.load(std::memory_order_acquire);
+            // sequence==pos 表示生产者拥有该 cell；负值表示队列已满。
             const auto dif = static_cast<std::intptr_t>(seq) - static_cast<std::intptr_t>(pos);
             if (dif == 0) {
                 if (enqueue_pos_.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed)) break;
@@ -65,6 +67,7 @@ class mpmc_bounded_queue {
         for (;;) {
             c = &buffer_[pos & mask_];
             const auto seq = c->sequence.load(std::memory_order_acquire);
+            // sequence==pos+1 表示消费者可以取走已发布的数据。
             const auto dif = static_cast<std::intptr_t>(seq) - static_cast<std::intptr_t>(pos + 1);
             if (dif == 0) {
                 if (dequeue_pos_.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed)) break;
@@ -87,6 +90,7 @@ class mpmc_bounded_queue {
     }
     std::size_t capacity() const noexcept { return capacity_; }
 
+    // 空队列时允许后端睡眠；condition_variable 不参与数据所有权同步。
     bool wait_pop(T& value, std::chrono::milliseconds timeout)
     {
         if (try_pop(value)) return true;

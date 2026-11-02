@@ -7,6 +7,7 @@ struct LogItem;
 class SymbolTable;
 }  // namespace flux::detail
 namespace flux {
+// Formatter 只在后端线程运行，将 LogItem 组装为完整日志行。
 class Formatter {
  public:
     virtual ~Formatter() = default;

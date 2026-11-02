@@ -13,9 +13,11 @@ void emit(Logger&, Level, std::source_location, std::string) noexcept;
 }
 class Logger {
  public:
+    // 热路径只做等级判断；默认阈值为 Info。
     bool should_log(Level l) const noexcept { return static_cast<unsigned>(l) >= static_cast<unsigned>(level_); }
     void set_level(Level l) noexcept { level_ = l; }
     void set_overflow(OverflowPolicy p) noexcept { policy_ = p; }
+    // 参数在生产线程展开，后端只负责行组装和 I/O。
     template <class... A>
     void log(Level l, std::source_location loc, std::string_view fmt, A&&... a) noexcept
     {

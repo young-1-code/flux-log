@@ -223,7 +223,8 @@ class PatternFormatter final : public flux::Formatter {
             auto t = std::chrono::system_clock::to_time_t(tp);
             std::tm tm{};
             localtime_r(&t, &tm);
-            ts << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+            const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()) % 1000;
+            ts << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << millis.count();
             std::string r = pat_;
             auto sub = [&](std::string_view k, std::string v) {
                 size_t p = 0;

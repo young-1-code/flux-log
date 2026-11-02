@@ -18,7 +18,7 @@
 - 所有公开日志入口 `noexcept`；热路径（`Logger::log` 及宏展开）无锁、无堆分配（超长消息 spill 除外）
 - `LogItem` 定长 **288 字节**（`static_assert` 钉死）；内联文本 256B；消息上限 65535B（超出截断并计数）；>256B 走 `spill`
 - 默认值（spec §5）：`queue_items=16384`（2 的幂，否则 `init` 抛 `std::invalid_argument`）、`overflow=DropNewest`、`flush_interval=200ms`、每个 sink 默认 `fsync=OnRotation`、FileSink 写缓冲 1MiB、`pin_backend=false`；`sinks` 不能为空
-- 时间戳：本地时区 `%Y-%m-%d %H:%M:%S.%6f`；主机无 tzdata 时回退 UTC 并 stderr 告警一次
+- 时间戳：本地时区 `%Y-%m-%d %H:%M:%S.fff`（3 位毫秒）；主机无 tzdata 时回退 UTC 并 stderr 告警一次
 - 默认 pattern：`{ts} [{level}] [{tid}] [{name}] {file}:{line} {msg}`；级别串小写 `trace/debug/info/warning/error/critical`；`{file}` 只渲染**文件 basename**；行由 Formatter 追加 `\n`
 - Sink 写失败语义：`Sink::write` 返回 `bool`（绝不抛）；后端连续 3 次失败熔断 10s（Backend 构造参数可注入，供测试）
 - 原始根目录 `mpmc_queue.hpp` 已迁移为 `src/detail/mpmc_queue.hpp` 的无锁实现；根目录旧文件删除，避免两份队列实现并存

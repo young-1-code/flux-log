@@ -151,7 +151,7 @@ enum class OverflowPolicy : std::uint8_t { DropNewest, Block };
 - 生产者：`std::format_to_n` 仅渲染用户参数（`"oid={} px={}"` → `"oid=42 px=100.5"`），复用 thread_local 缓冲；
 - 后端：`PatternFormatter` 把 `ns/tid/level/logger 名/file:line` 与 text 组装成完整行，追加进 per-sink 行缓冲（`std::span<const std::string_view>` 批量交给 sink）；
 - Pattern 语法对齐业界惯例：`{ts}{level}{tid}{name}{file}{line}{msg}`，init 时解析为 token 序组（`consteval` 编译期校验默认 pattern）；
-- `{ts}` 渲染默认本地时区 `%Y-%m-%d %H:%M:%S.%6f`（µs），pattern 可覆盖；DailyFileSink 轮转边界取本地午夜；主机无 tzdata 时回退 UTC 并 stderr 告警一次（已确认：本地时区）。
+- `{ts}` 渲染默认本地时区 `%Y-%m-%d %H:%M:%S.fff`（3 位毫秒），pattern 可覆盖；DailyFileSink 轮转边界取本地午夜；主机无 tzdata 时回退 UTC 并 stderr 告警一次（已确认：本地时区）。
 
 ### 3.5 后端线程与刷盘（D6/D7/D9）
 
@@ -350,5 +350,5 @@ bench 内容：`bench/` 下 (a) 生产端 ns/op 直测；(b) 多线程端到端 
 | Q5 | 工具链实际版本（gcc/clang、libstdc++）？`std::format` 需 gcc≥13 | 编译门槛 | gcc 13 |
 | Q6 | 是否需要结构化（JSON）输出或显式字段（file/line 作为独立列）？ | LogItem 布局 | 纯文本行 |
 | Q7 | 交付形态：静态库 + CMake，还是 header-only？ | 目录结构与集成 | 静态库 |
-| Q8 | ~~行时间戳/Daily 轮转的格式与时区约定？~~ **已确认（2026-11-01）：本地时区 + `%Y-%m-%d %H:%M:%S.%6f`** | D5 渲染、DailyFileSink | ✅ 已定 |
+| Q8 | ~~行时间戳/Daily 轮转的格式与时区约定？~~ **已确认（2026-11-02）：本地时区 + `%Y-%m-%d %H:%M:%S.fff`（3 位毫秒）** | D5 渲染、DailyFileSink | ✅ 已定 |
 | Q9 | ~~多 sink 组路由 v1 必须吗？~~ **已确认（2026-11-01）：v1 单组，多组留作 v2** | §5 API、注册表 | ✅ 已定 |

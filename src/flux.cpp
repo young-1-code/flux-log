@@ -1,11 +1,11 @@
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
@@ -74,16 +74,24 @@ std::string basename(std::string_view s)
 class FileSink final : public flux::Sink {
  protected:
     std::string path_;
-    std::ofstream out_;
+    int fd_{-1};
     std::string buf_;
     size_t limit_;
+    std::size_t written_{0};
     std::optional<flux::Rotate> rot_;
 
  public:
     FileSink(std::string p, size_t b, std::optional<flux::Rotate> r) : path_(std::move(p)), limit_(b), rot_(r)
     {
-        out_.open(path_, std::ios::app | std::ios::binary);
-        if (!out_) throw std::system_error(errno, std::generic_category(), "open log");
+        fd_ = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd_ < 0) throw std::system_error(errno, std::generic_category(), "open log");
+        struct stat st {};
+        if (::fstat(fd_, &st) == 0) written_ = static_cast<std::size_t>(st.st_size);
+    }
+    ~FileSink() override
+    {
+        flush();
+        if (fd_ >= 0) ::close(fd_);
     }
     bool write(std::span<const std::string_view> ls) noexcept override
     {
@@ -91,9 +99,10 @@ class FileSink final : public flux::Sink {
             size_t n = 0;
             for (auto s : ls)
                 n += s.size();
-            if (rot_ && rot_->max_size && std::filesystem::file_size(path_) + buf_.size() + n > rot_->max_size) {
+            if (rot_ && rot_->max_size && written_ + buf_.size() + n > rot_->max_size) {
                 flush();
-                out_.close();
+                ::close(fd_);
+                fd_ = -1;
                 for (unsigned i = rot_->keep; i > 0; --i) {
                     auto a = path_ + "." + std::to_string(i), b = path_ + "." + std::to_string(i + 1);
                     if (i == rot_->keep)
@@ -102,7 +111,9 @@ class FileSink final : public flux::Sink {
                         std::filesystem::rename(a, b);
                 }
                 if (std::filesystem::exists(path_)) std::filesystem::rename(path_, path_ + ".1");
-                out_.open(path_, std::ios::trunc | std::ios::binary);
+                fd_ = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd_ < 0) return false;
+                written_ = 0;
             }
             for (auto s : ls)
                 buf_.append(s);
@@ -115,9 +126,16 @@ class FileSink final : public flux::Sink {
     bool flush() noexcept override
     {
         try {
-            out_ << buf_;
-            out_.flush();
-            bool ok = !!out_;
+            std::size_t offset = 0;
+            while (offset < buf_.size()) {
+                const auto n = ::write(fd_, buf_.data() + offset, buf_.size() - offset);
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) return false;
+                offset += static_cast<std::size_t>(n);
+            }
+            written_ += buf_.size();
+            if (fsync_ == flux::FsyncPolicy::Always && ::fsync(fd_) != 0) return false;
+            bool ok = true;
             buf_.clear();
             return ok;
         } catch (...) {

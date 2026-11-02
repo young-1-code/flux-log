@@ -49,7 +49,7 @@
 
 **Interfaces:**
 - Produces（后续所有任务依赖）:
-  - `enum class Level : std::uint8_t { Trace, Debug, Info, Warn, Error, Critical, Off };`
+  - `enum class Level : std::uint8_t { Trace, Debug, Info, Warn, Error, Panic, Off };`
   - `constexpr std::string_view level_str(Level) noexcept;`（返回小写串，未知返回 `"off"`）
   - `enum class OverflowPolicy : std::uint8_t { DropNewest, Block };`、`enum class FsyncPolicy : std::uint8_t { Never, OnRotation, Always };`
   - `struct Rotate { std::size_t max_size; unsigned keep; };`
@@ -64,7 +64,7 @@
 #include <flux/level.hpp>
 #include <gtest/gtest.h>
 TEST(Level, OrderAndStrings) {
-    EXPECT_TRUE(Level::Trace < Level::Debug && Level::Critical < Level::Off);
+    EXPECT_TRUE(Level::Trace < Level::Debug && Level::Panic < Level::Off);
     EXPECT_EQ(flux::level_str(Level::Info), "info");
     EXPECT_EQ(flux::level_str(Level::Warn), "warn");
 }
@@ -296,7 +296,7 @@ public:
 
 **未调 shutdown 的兜底（spec §8）**：registry 的函数内静态 `unique_ptr` 析构时 best-effort 调 `Backend::shutdown(1s)` 并 stderr 打一条警告。
 
-宏（spec §5 已钉）：`FLUX_LOG` + `FLUX_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL`。
+宏：`FLUX_LOG` + `FLUX_TRACE/DEBUG/INFO/WARN/ERROR/PANIC`；`FLUX_CRITICAL` 保留为兼容别名。
 
 - [ ] **Step 1: 写失败测试**：init(FileSink(tmp), 默认 pattern) → `FLUX_INFO(order, "oid={} px={}", 42, 1.5)` → shutdown → 文件恰含 `oid=42 px=1.5` 行且带 `order.cpp` basename 与行号（用固定测试文件行）；**pre-init**：不 init 直接 `get("x")` + FLUX_WARN → dup2 捕获 stderr 含告警一次 + 第二条不再告警 + `stats().pre_init==2`；**post-shutdown**：shutdown 后 FLUX_INFO 不落文件、`post_shutdown==1`；**re-init**：完整两轮 init→log→shutdown，两文件各自完整；**并发 get**：8 线程同时 `get("same")` 地址唯一；**未调 shutdown 的兜底**：`fork()` 子进程 init+log 后直接 `_exit` 前 let 静态析构跑（用 `exit(0)` 非 `_exit`）→ 父进程等子退出后断言文件有该行且 stderr 有警告（`#if !defined(__SANITIZE_THREAD__)` 守护，TSAN 与 fork 冲突）；**compile strip**：`test_compile_strip.cpp` 以 `-DFLUX_LOG_COMPILE_LEVEL=3` 编译，设 level=Trace 仍无 Trace/Debug 输出（Info 有）
 - [ ] **Step 2: 确认失败** → **Step 3: 实现**（registry 静态存储用 `std::unique_ptr` + 函数内静态，规避静态序问题；`get` 创建路径加锁，热路径无锁）

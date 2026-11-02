@@ -116,7 +116,7 @@ flux-log 是面向单进程多线程程序（典型场景：交易系统的订�
 ### 3.2 队列负载：LogItem（D2）
 
 ```cpp
-enum class Level : std::uint8_t { Trace, Debug, Info, Warn, Error, Critical, Off };
+enum class Level : std::uint8_t { Trace, Debug, Info, Warn, Error, Panic, Off };
 
 struct LogItem {                       // 定长；含 spill 所有权，必须移动而非字节复制
     std::uint64_t ns;                  // 生产者采集的 realtime 纳秒
@@ -247,7 +247,7 @@ flux::shutdown();                                   // 排空+flush+join（main 
 
 #define FLUX_INFO(logger, fmt, ...) \
     FLUX_LOG(logger, flux::Level::Info, fmt __VA_OPT__(, ) __VA_ARGS__)
-// TRACE/DEBUG/WARN/ERROR/CRITICAL 同构；FLUX_LOG 仅内部使用（lvl 须为编译期常量）
+// TRACE/DEBUG/WARN/ERROR/PANIC 同构；FLUX_LOG 仅内部使用（lvl 须为编译期常量）
 ```
 
 四层递进过滤：编译期裁剪（`if constexpr` + `-DFLUX_LOG_COMPILE_LEVEL`）→ 运行期级别检查（relaxed 原子读，未命中 ~1ns）→ `std::format_string` 编译期校验格式串 → 格式化入队。

@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string_view>
 namespace flux {
-enum class Level : std::uint8_t { Trace, Debug, Info, Warn, Error, Critical, Off };
+enum class Level : std::uint8_t { Trace, Debug, Info, Warn, Error, Panic, Off };
 constexpr std::string_view level_str(Level v) noexcept
 {
     switch (v) {
@@ -16,7 +16,7 @@ constexpr std::string_view level_str(Level v) noexcept
             return "warn";
         case Level::Error:
             return "error";
-        case Level::Critical:
+        case Level::Panic:
             return "panic";
         default:
             return "off";

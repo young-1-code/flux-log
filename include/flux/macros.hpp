@@ -9,4 +9,5 @@
 #define FLUX_INFO(l, f, ...) FLUX_LOG(l, flux::Level::Info, f __VA_OPT__(, ) __VA_ARGS__)
 #define FLUX_WARN(l, f, ...) FLUX_LOG(l, flux::Level::Warn, f __VA_OPT__(, ) __VA_ARGS__)
 #define FLUX_ERROR(l, f, ...) FLUX_LOG(l, flux::Level::Error, f __VA_OPT__(, ) __VA_ARGS__)
-#define FLUX_CRITICAL(l, f, ...) FLUX_LOG(l, flux::Level::Critical, f __VA_OPT__(, ) __VA_ARGS__)
+#define FLUX_PANIC(l, f, ...) FLUX_LOG(l, flux::Level::Panic, f __VA_OPT__(, ) __VA_ARGS__)
+#define FLUX_CRITICAL(l, f, ...) FLUX_PANIC(l, f __VA_OPT__(, ) __VA_ARGS__)

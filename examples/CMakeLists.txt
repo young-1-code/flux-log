@@ -1,2 +1,15 @@
+cmake_minimum_required(VERSION 3.22)
+project(flux-log-example LANGUAGES CXX)
+
+if(NOT TARGET flux)
+    add_library(flux STATIC ../src/flux.cpp)
+    target_include_directories(flux PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+    target_compile_features(flux PUBLIC cxx_std_20)
+    target_compile_options(flux PRIVATE -Wall -Wextra -Wpedantic)
+    if(UNIX)
+        target_link_libraries(flux PUBLIC pthread)
+    endif()
+endif()
+
 add_executable(flux_example basic.cpp)
 target_link_libraries(flux_example PRIVATE flux)

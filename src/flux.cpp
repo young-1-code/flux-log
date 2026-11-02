@@ -195,38 +195,93 @@ class DailySink final : public flux::Sink {
 };
 // PatternFormatter 把生产时间戳和符号表字段渲染成最终文本行。
 class PatternFormatter final : public flux::Formatter {
-    std::string pat_;
+    enum class Kind { Literal, Timestamp, Level, Tid, Name, File, Line, Message };
+    struct Token {
+        Kind kind;
+        std::string literal;
+    };
+    std::vector<Token> tokens_;
     SymbolTable* n_;
     SymbolTable* f_;
 
  public:
-    PatternFormatter(std::string p, SymbolTable* n, SymbolTable* f) : pat_(std::move(p)), n_(n), f_(f) {}
+    PatternFormatter(std::string p, SymbolTable* n, SymbolTable* f) : n_(n), f_(f)
+    {
+        std::size_t pos = 0;
+        while (pos < p.size()) {
+            auto open = p.find('{', pos);
+            if (open != pos)
+                tokens_.push_back(
+                    {Kind::Literal, p.substr(pos, open == std::string::npos ? p.size() - pos : open - pos)});
+            if (open == std::string::npos) break;
+            auto close = p.find('}', open + 1);
+            if (close == std::string::npos) throw std::invalid_argument("unterminated pattern token");
+            auto key = std::string_view(p).substr(open + 1, close - open - 1);
+            Kind kind;
+            if (key == "ts")
+                kind = Kind::Timestamp;
+            else if (key == "level")
+                kind = Kind::Level;
+            else if (key == "tid")
+                kind = Kind::Tid;
+            else if (key == "name")
+                kind = Kind::Name;
+            else if (key == "file")
+                kind = Kind::File;
+            else if (key == "line")
+                kind = Kind::Line;
+            else if (key == "msg")
+                kind = Kind::Message;
+            else
+                throw std::invalid_argument("unknown pattern token: " + std::string(key));
+            tokens_.push_back({kind, {}});
+            pos = close + 1;
+        }
+    }
     void format(const LogItem& i, std::string& o) noexcept override
     {
         try {
-            std::ostringstream ts;
-            auto tp = std::chrono::system_clock::time_point(std::chrono::nanoseconds(i.ns));
-            auto t = std::chrono::system_clock::to_time_t(tp);
-            std::tm tm{};
-            localtime_r(&t, &tm);
-            const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch()) % 1000000;
-            ts << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(6) << micros.count();
-            std::string r = pat_;
-            auto sub = [&](std::string_view k, std::string v) {
-                size_t p = 0;
-                while ((p = r.find(std::string("{") + std::string(k) + "}", p)) != std::string::npos) {
-                    r.replace(p, k.size() + 2, v);
-                    p += v.size();
+            std::string timestamp;
+            for (const auto& token : tokens_) {
+                switch (token.kind) {
+                    case Kind::Literal:
+                        o += token.literal;
+                        break;
+                    case Kind::Timestamp:
+                        if (timestamp.empty()) {
+                            std::ostringstream ts;
+                            auto tp = std::chrono::system_clock::time_point(std::chrono::nanoseconds(i.ns));
+                            auto t = std::chrono::system_clock::to_time_t(tp);
+                            std::tm tm{};
+                            localtime_r(&t, &tm);
+                            const auto micros =
+                                std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch()) % 1000000;
+                            ts << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(6)
+                               << micros.count();
+                            timestamp = ts.str();
+                        }
+                        o += timestamp;
+                        break;
+                    case Kind::Level:
+                        o += flux::level_str(i.level);
+                        break;
+                    case Kind::Tid:
+                        o += std::to_string(i.tid);
+                        break;
+                    case Kind::Name:
+                        if (n_) o += n_->resolve(i.name_id);
+                        break;
+                    case Kind::File:
+                        if (f_) o += f_->resolve(i.file_id);
+                        break;
+                    case Kind::Line:
+                        o += std::to_string(i.line);
+                        break;
+                    case Kind::Message:
+                        o += i.view();
+                        break;
                 }
-            };
-            sub("ts", ts.str());
-            sub("level", std::string(flux::level_str(i.level)));
-            sub("tid", std::to_string(i.tid));
-            sub("name", n_ ? std::string(n_->resolve(i.name_id)) : "");
-            sub("file", f_ ? std::string(f_->resolve(i.file_id)) : "");
-            sub("line", std::to_string(i.line));
-            sub("msg", std::string(i.view()));
-            o += r;
+            }
             o += '\n';
         } catch (...) {
         }

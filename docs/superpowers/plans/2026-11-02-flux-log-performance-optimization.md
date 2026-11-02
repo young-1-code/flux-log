@@ -47,6 +47,7 @@
 - 后端使用固定/可复用缓冲，移除每条日志的 `find/replace`、`ostringstream` 和多次字符串构造。
 - 缓存秒级日期前缀，只对微秒部分做整数格式化。
 - 验收：自定义 pattern、默认紧凑格式、6 位微秒和 basename 输出一致。
+- 当前结果：pattern 在 init 时解析为 token，后端不再逐条执行 find/replace；默认格式、微秒时间戳和 3 行示例输出通过。单线程 630,174 msg/s，4 线程 1,093,630 msg/s。
 
 ## 阶段 6：FileSink I/O
 

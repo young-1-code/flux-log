@@ -55,6 +55,11 @@
 - 时间戳使用固定缓冲和 `to_chars`，避免默认路径的 `ostringstream`。
 - 当前结果：单线程 721,177 msg/s，4 线程 1,108,820 msg/s；文件端到端 774,317 msg/s，1,000,000 条全部 accepted 并落盘。
 
+### 阶段 5b：批量输出字符串复用
+
+- batch 固定保留 256 个 `std::string` 槽位，每批只清空内容，复用内部容量。
+- 当前结果：单线程 724,390 msg/s，4 线程 1,174,760 msg/s；文件端到端 825,451 msg/s，accepted 853,074，落盘行数一致。
+
 ## 阶段 6：FileSink I/O
 
 - 用文件描述符和 `write/writev` 替换 `ofstream <<`。

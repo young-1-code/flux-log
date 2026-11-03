@@ -395,7 +395,7 @@ void backend()
     std::vector<std::string> lines;
     std::vector<std::string_view> views;
     batch.reserve(batch_capacity);
-    lines.reserve(batch_capacity);
+    lines.resize(batch_capacity);
     views.reserve(batch_capacity);
     for (;;) {
         LogItem first;
@@ -411,10 +411,10 @@ void backend()
             if (!s.q.try_pop(item)) break;
             batch.push_back(std::move(item));
         }
-        lines.clear();
-        for (const auto& item : batch) {
-            lines.emplace_back();
-            s.fmt->format(item, lines.back());
+        for (std::size_t i = 0; i < batch.size(); ++i) {
+            // 保留 string 的内部容量，只清除上一批的内容。
+            lines[i].clear();
+            s.fmt->format(batch[i], lines[i]);
         }
         bool flush_needed = false;
         for (const auto& item : batch)

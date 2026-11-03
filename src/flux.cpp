@@ -378,7 +378,7 @@ class FastDefaultFormatter final : public flux::Formatter {
 // 全局状态由 registry 持有；s.m 保护生命周期、logger 表和统计数据。
 struct State {
     std::mutex m;
-    bool running = false, stopping = false;
+    std::atomic_bool running{false}, stopping{false};
     flux::Config cfg;
     SymbolTable names, files;
     std::unordered_map<std::string, std::unique_ptr<flux::Logger>> loggers;
@@ -573,7 +573,6 @@ namespace flux::detail {
 void record_format_failed() noexcept
 {
     auto& s = state();
-    std::lock_guard l(s.m);
     s.at.format_failed++;
 }
 
@@ -582,7 +581,6 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
     try {
         auto& s = state();
         if (msg.size() > 65535) {
-            std::lock_guard l(s.m);
             s.at.oversize_truncated++;
             msg.resize(65535);
         }
@@ -610,25 +608,20 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
             std::memcpy(i.spill.get(), msg.data(), msg.size());
         }
         for (;;) {
-            {
-                std::lock_guard l(s.m);
-                if (!s.running) {
-                    if (s.stopping)
-                        s.at.post_shutdown++;
-                    else
-                        s.at.pre_init++;
-                    std::fwrite(msg.data(), 1, msg.size(), stderr);
-                    std::fputc('\n', stderr);
-                    return;
-                }
+            if (!s.running.load(std::memory_order_acquire)) {
+                if (s.stopping.load(std::memory_order_acquire))
+                    s.at.post_shutdown++;
+                else
+                    s.at.pre_init++;
+                std::fwrite(msg.data(), 1, msg.size(), stderr);
+                std::fputc('\n', stderr);
+                return;
             }
             if (s.q.try_push(std::move(i))) {
-                std::lock_guard l(s.m);
                 s.at.accepted++;
                 return;
             }
             if (logger.policy_ == OverflowPolicy::DropNewest) {
-                std::lock_guard l(s.m);
                 s.at.queue_dropped++;
                 return;
             }
@@ -636,7 +629,6 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
         }
     } catch (...) {
         auto& s = state();
-        std::lock_guard l(s.m);
         s.at.format_failed++;
     }
 }

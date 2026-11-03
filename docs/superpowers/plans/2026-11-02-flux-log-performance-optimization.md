@@ -20,11 +20,17 @@
 
 ## 阶段 2：生产端元数据缓存
 
-- Logger 创建时缓存 `name_id`。
-- 每线程缓存最近的 source file basename 到 `file_id` 的映射。
+- Logger 创建时保留 logger 名字符串；生产端直接复制到固定元数据数组。
+- source file basename 直接复制到固定数组，不再依赖符号 ID。
 - `tid` 改为 thread-local 缓存，移除每条日志的 `gettid()` 调用。
 - 验收：多 logger、跨线程 source file、re-init 后符号仍正确。
 - 当前结果：name/file ID 与 tid 已缓存，GCC 13 构建和多线程示例通过；压测受共享统计锁和后端串行处理影响较大，300,000 条单线程约 209k～211k msg/s，4 线程约 231k～233k msg/s，未观察到稳定收益，后续阶段需先消除统计锁和逐条后端处理。
+
+### 阶段 2a：固定数组元数据
+
+- `LogItem` 使用 `name[32]` 和 `file[64]`，超长分别截断并计入 `metadata_truncated`；移除 SymbolTable 和后端读取锁。
+- `LogItem` 目标大小改为 384B，默认队列约占 6 MiB。
+- 当前结果：单线程 634,430 msg/s，4 线程 1,129,530 msg/s；文件端到端 766,794 msg/s，输出内容和行数验证通过。
 
 ## 阶段 3：统计路径去锁
 

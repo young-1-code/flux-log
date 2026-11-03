@@ -38,7 +38,6 @@ class Logger {
     friend void init(Config);
     friend void shutdown(std::chrono::milliseconds);
     std::string name_;
-    std::uint16_t name_id_{0};
     Level level_{Level::Info};
     OverflowPolicy policy_{OverflowPolicy::DropNewest};
     friend void detail::emit(Logger&, Level, std::source_location, std::string) noexcept;

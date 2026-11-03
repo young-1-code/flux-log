@@ -56,7 +56,7 @@ flux-log 是面向单进程多线程程序（典型场景：交易系统的订�
 │    5) pending++ → 按需 notify  │      │  SinkGroup（File / Rotating /      │
 │        溢出→丢弃+计数          │      │  Daily / Stdout）批量写 + 刷盘/轮转 │
 └──────────────┬───────────────┘      └────────────────────────────────────┘
-               │   LogItem（定长 ≈288B，内联文本）│        ▲
+               │   LogItem（定长 ≈384B，内联文本）│        ▲
                ▼                                     │ flush 信号 / 周期到期
         ┌────────────────────────────┐    ┌─────────┴──────────┐
         │ Vyukov 有界 MPMC 环形队列    │    │ condvar + 状态标志   │
@@ -108,10 +108,10 @@ flux-log 是面向单进程多线程程序（典型场景：交易系统的订�
 
 沿用 Vyukov 有界 MPMC 环形队列算法（`src/detail/mpmc_queue.hpp`），并做两点包装改造：
 
-- **定长元素**：cell 直接承载 `LogItem`（目标 288B）；含 spill 所有权，必须使用移动语义；
+- **定长元素**：cell 直接承载 `LogItem`（目标 384B）；含 spill 所有权，必须使用移动语义；
 - **等待/通知包装层** `BackendQueue`：内部聚合 `pending` 原子计数与溢出策略，接口为 `try_push(LogItem&)` / `pop_batch()` / `wait_and_pop(timeout)`。
 
-容量以"条数"配置，必须 2 的幂，默认 16384 条（按 288B 元素约 4.5 MiB）。
+容量以"条数"配置，必须 2 的幂，默认 16384 条（按 384B 元素约 6 MiB）。
 
 ### 3.2 队列负载：LogItem（D2）
 
@@ -123,18 +123,18 @@ struct LogItem {                       // 定长；含 spill 所有权，必须�
     std::uint32_t tid;                 // thread_local 缓存的 gettid()
     std::uint16_t text_len;            // 有效长度，最大 65535；超限截断并计数
     Level         level;
-    std::uint16_t name_id;             // logger 名（注册表驻留表索引，见 §3.6）
-    std::uint16_t file_id;             // 文件 basename 驻留表索引
     std::uint32_t line;                // source_location 行号
-    char          text[256];           // 内联文本
+    char          name[32];             // logger 名，最多 31 字符，超出截断
+    char          file[64];             // 文件 basename，最多 63 字符，超出截断
+    char          text[256];            // 内联文本
     std::unique_ptr<char[]> spill;     // 超长消息（> inline_cap）的堆后备，罕见路径
 };
 ```
 
 - 生产者用 `thread_local LogItem staging` + `std::format_to_n` 直接格式化进内联缓冲：**常规消息零堆分配**；
 - 256B 以上消息走 `spill` 堆分配；超过 65535B 截断、计入 `oversize_truncated` 并限频告警；
-- logger 名和文件 basename 经注册表**驻留**（append-only 表，`name_id/file_id` 索引），后端按 id 反查；
-- `file/line` 由宏经 `std::source_location`（编译期）传入，以 `file_id + line` 独立字段保存；`function` 暂不进入 LogItem。
+- logger 名和文件 basename 直接复制到固定数组，分别限制为 31/63 个字符，超出计入 `metadata_truncated`；
+- `file/line` 由宏经 `std::source_location`（编译期）传入，以固定数组和 line 字段保存；`function` 暂不进入 LogItem。
 
 ### 3.3 溢出策略（D3）
 
@@ -166,7 +166,7 @@ enum class OverflowPolicy : std::uint8_t { DropNewest, Block };
 ### 3.6 Logger 注册表与 sink 组（D8）
 
 - **单组路由（Q9 已确认）**：v1 所有 logger 共享同一组 sink；`flux::get(name)` 按名取 logger，首次创建即注册；
-- 注册表仅维护一张 **append-only** 的 `name_id → 名字` 驻留表，后端无锁读；sink 集合 `init()` 时固定；多组路由为 v2 方向，届时再引入 `sink_id`；
+- logger 名称由 Logger 自身持有并在每条 LogItem 中截断复制；sink 集合 `init()` 时固定；多组路由为 v2 方向，届时再引入 `sink_id`；
 - 溢出策略是**每 logger** 的生产端行为（`Block` 只阻塞该调用线程自己，不拖累其他线程），与单组队列正交，审计类 logger 仍可单独配 `Block`；
 - logger 级别阈值 `std::atomic<Level>`，运行时可调（`log.set_level()`），热路径一次 relaxed load。
 - 新建 logger 默认级别为 `Info`；未知级别、溢出策略、fsync 策略和非法配置一律拒绝初始化，不静默回退。

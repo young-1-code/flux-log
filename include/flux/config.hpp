@@ -18,6 +18,7 @@ struct Rotate {
 struct Stats {
     // accepted 是成功入队的消息数；其余字段按消息离开链路的原因分类。
     std::uint64_t accepted{}, queue_dropped{}, shutdown_abandoned{}, format_failed{}, oversize_truncated{};
+    std::uint64_t metadata_truncated{};
     std::uint64_t sink_filtered{}, sink_failed{}, pre_init{}, post_shutdown{}, flushes{};
     std::unordered_map<std::string, std::uint64_t> persisted;
 };

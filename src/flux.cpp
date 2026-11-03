@@ -20,39 +20,15 @@
 
 namespace flux::detail {
 void record_format_failed() noexcept;
-// append-only 符号表：生产者写入时加锁，后端只按 id 读取。
-class SymbolTable {
-    mutable std::mutex m_;
-    std::vector<std::string> v_{""};
-    std::unordered_map<std::string, uint16_t> ids_;
-
- public:
-    uint16_t intern(std::string_view s) noexcept
-    {
-        std::lock_guard l(m_);
-        auto it = ids_.find(std::string(s));
-        if (it != ids_.end()) return it->second;
-        if (v_.size() >= 65536) return 0;
-        uint16_t id = (uint16_t)v_.size();
-        v_.emplace_back(s);
-        ids_[v_.back()] = id;
-        return id;
-    }
-    std::string_view resolve(uint16_t id) const noexcept
-    {
-        std::lock_guard l(m_);
-        return id < v_.size() ? v_[id] : std::string_view{};
-    }
-};
-// 队列元素固定为 288B；spill 只在消息超过 256B 时分配。
+// 队列元素固定为 384B；name/file 超长时分别截断到 31/63 个字符。
 struct LogItem {
     uint64_t ns{};
     uint32_t tid{};
     uint16_t text_len{};
     Level level{Level::Info};
-    uint16_t name_id{};
-    uint16_t file_id{};
     uint32_t line{};
+    char name[32]{};
+    char file[64]{};
     char text[256]{};
     std::unique_ptr<char[]> spill;
     std::string_view view() const noexcept
@@ -60,12 +36,11 @@ struct LogItem {
         return spill ? std::string_view(spill.get(), text_len) : std::string_view(text, text_len);
     }
 };
-static_assert(sizeof(LogItem) == 288, "LogItem ABI must remain 288 bytes");
+static_assert(sizeof(LogItem) == 384, "LogItem ABI must remain 384 bytes");
 }  // namespace flux::detail
 
 namespace {
 using flux::detail::LogItem;
-using flux::detail::SymbolTable;
 std::string basename(std::string_view s)
 {
     auto p = s.find_last_of("/\\");
@@ -220,11 +195,9 @@ class PatternFormatter final : public flux::Formatter {
         std::string literal;
     };
     std::vector<Token> tokens_;
-    SymbolTable* n_;
-    SymbolTable* f_;
 
  public:
-    PatternFormatter(std::string p, SymbolTable* n, SymbolTable* f) : n_(n), f_(f)
+    explicit PatternFormatter(std::string p)
     {
         std::size_t pos = 0;
         while (pos < p.size()) {
@@ -288,10 +261,10 @@ class PatternFormatter final : public flux::Formatter {
                         o += std::to_string(i.tid);
                         break;
                     case Kind::Name:
-                        if (n_) o += n_->resolve(i.name_id);
+                        o += i.name;
                         break;
                     case Kind::File:
-                        if (f_) o += f_->resolve(i.file_id);
+                        o += i.file;
                         break;
                     case Kind::Line:
                         o += std::to_string(i.line);
@@ -308,9 +281,6 @@ class PatternFormatter final : public flux::Formatter {
 };
 // 默认 pattern 的专用快速路径：字段顺序固定，不再解释 token。
 class FastDefaultFormatter final : public flux::Formatter {
-    SymbolTable* names_;
-    SymbolTable* files_;
-
     static void append_uint(std::string& out, std::uint64_t value)
     {
         char buffer[32];
@@ -338,7 +308,7 @@ class FastDefaultFormatter final : public flux::Formatter {
     }
 
  public:
-    FastDefaultFormatter(SymbolTable* names, SymbolTable* files) : names_(names), files_(files) {}
+    FastDefaultFormatter() = default;
     void format(const LogItem& item, std::string& out) noexcept override
     {
         try {
@@ -349,9 +319,9 @@ class FastDefaultFormatter final : public flux::Formatter {
             out.append("][");
             append_uint(out, item.tid);
             out.append("][");
-            out.append(names_->resolve(item.name_id));
+            out.append(item.name);
             out.append("][");
-            out.append(files_->resolve(item.file_id));
+            out.append(item.file);
             out.push_back(':');
             append_uint(out, item.line);
             out.append("]");
@@ -366,7 +336,6 @@ struct State {
     std::mutex m;
     bool running = false, stopping = false;
     flux::Config cfg;
-    SymbolTable names, files;
     std::unordered_map<std::string, std::unique_ptr<flux::Logger>> loggers;
     flux::detail::mpmc_bounded_queue<LogItem> q;
     std::vector<std::shared_ptr<flux::Sink>> sinks;
@@ -374,7 +343,7 @@ struct State {
     std::thread worker;
     struct AtomicStats {
         std::atomic_uint64_t accepted{0}, queue_dropped{0}, shutdown_abandoned{0}, format_failed{0};
-        std::atomic_uint64_t oversize_truncated{0}, sink_filtered{0}, sink_failed{0};
+        std::atomic_uint64_t oversize_truncated{0}, metadata_truncated{0}, sink_filtered{0}, sink_failed{0};
         std::atomic_uint64_t pre_init{0}, post_shutdown{0}, flushes{0};
     } at;
     std::unique_ptr<std::atomic_uint64_t[]> persisted;
@@ -445,10 +414,10 @@ void backend()
 }  // namespace
 
 namespace flux {
-std::unique_ptr<Formatter> make_pattern_formatter(std::string_view p, detail::SymbolTable* n, detail::SymbolTable* f)
+std::unique_ptr<Formatter> make_pattern_formatter(std::string_view p)
 {
-    return std::make_unique<PatternFormatter>(
-        p.empty() ? "{ts} [{level}][{tid}][{name}][{file}:{line}]{msg}" : std::string(p), n, f);
+    return std::make_unique<PatternFormatter>(p.empty() ? "{ts} [{level}][{tid}][{name}][{file}:{line}]{msg}"
+                                                        : std::string(p));
 }
 std::shared_ptr<Sink> make_file_sink(std::string p, std::optional<Rotate> r, std::size_t b)
 {
@@ -482,9 +451,9 @@ void init(Config c)
     for (std::size_t i = 0; i < s.persisted_size; ++i)
         s.persisted[i].store(0);
     if (s.cfg.pattern.empty())
-        s.fmt = std::make_unique<FastDefaultFormatter>(&s.names, &s.files);
+        s.fmt = std::make_unique<FastDefaultFormatter>();
     else
-        s.fmt = std::make_unique<PatternFormatter>(s.cfg.pattern, &s.names, &s.files);
+        s.fmt = std::make_unique<PatternFormatter>(s.cfg.pattern);
     s.stopping = false;
     s.running = true;
     s.worker = std::thread(backend);
@@ -497,7 +466,6 @@ Logger& get(std::string_view n)
     if (it != s.loggers.end()) return *it->second;
     auto p = std::make_unique<Logger>();
     p->name_ = n;
-    p->name_id_ = s.names.intern(p->name_);
     auto& x = *p;
     s.loggers.emplace(p->name_, std::move(p));
     return x;
@@ -542,6 +510,7 @@ Stats stats()
     out.shutdown_abandoned = s.at.shutdown_abandoned.load();
     out.format_failed = s.at.format_failed.load();
     out.oversize_truncated = s.at.oversize_truncated.load();
+    out.metadata_truncated = s.at.metadata_truncated.load();
     out.sink_filtered = s.at.sink_filtered.load();
     out.sink_failed = s.at.sink_failed.load();
     out.pre_init = s.at.pre_init.load();
@@ -574,17 +543,17 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
         i.level = lvl;
         i.ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
                    .count();
-        // source_location 通常来自字符串字面量，按指针缓存最近文件的符号 ID。
-        thread_local const char* cached_file = nullptr;
-        thread_local std::uint16_t cached_file_id = 0;
         thread_local std::uint32_t cached_tid = static_cast<std::uint32_t>(::gettid());
         i.tid = cached_tid;
-        i.name_id = logger.name_id_;
-        if (loc.file_name() != cached_file) {
-            cached_file = loc.file_name();
-            cached_file_id = s.files.intern(basename(loc.file_name()));
-        }
-        i.file_id = cached_file_id;
+        const auto copy_metadata = [&](char* dst, std::size_t capacity, std::string_view value) {
+            const auto copied = std::min(capacity - 1, value.size());
+            std::memcpy(dst, value.data(), copied);
+            dst[copied] = '\0';
+            return copied != value.size();
+        };
+        const auto file = basename(loc.file_name());
+        if (copy_metadata(i.name, sizeof(i.name), logger.name_) || copy_metadata(i.file, sizeof(i.file), file))
+            s.at.metadata_truncated++;
         i.line = loc.line();
         i.text_len = (uint16_t)msg.size();
         if (msg.size() <= 256)

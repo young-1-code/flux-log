@@ -4,6 +4,7 @@
 #include <string_view>
 namespace flux::detail {
 struct LogItem;
+class SymbolTable;
 }  // namespace flux::detail
 namespace flux {
 // Formatter 只在后端线程运行，将 LogItem 组装为完整日志行。
@@ -12,5 +13,6 @@ class Formatter {
     virtual ~Formatter() = default;
     virtual void format(const detail::LogItem&, std::string&) noexcept = 0;
 };
-std::unique_ptr<Formatter> make_pattern_formatter(std::string_view pattern);
+std::unique_ptr<Formatter> make_pattern_formatter(std::string_view pattern, detail::SymbolTable* names = nullptr,
+                                                  detail::SymbolTable* files = nullptr);
 }  // namespace flux

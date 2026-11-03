@@ -590,13 +590,12 @@ void emit(Logger& logger, Level lvl, std::source_location loc, std::string msg) 
                    .count();
         thread_local std::uint32_t cached_tid = static_cast<std::uint32_t>(::gettid());
         i.tid = cached_tid;
-        const auto file = basename(loc.file_name());
         i.name_id = logger.name_id_;
         thread_local const char* cached_file = nullptr;
         thread_local std::uint16_t cached_file_id = 0;
         if (loc.file_name() != cached_file) {
             cached_file = loc.file_name();
-            cached_file_id = s.files.intern(file);
+            cached_file_id = s.files.intern(basename(loc.file_name()));
         }
         i.file_id = cached_file_id;
         i.line = loc.line();
